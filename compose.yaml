@@ -1,0 +1,24 @@
+services:
+  dev:
+    # docker compose run --rm dev python main.py
+    image: ${REGISTRY}/cbz-maker:dev
+    build:
+      context: ./app
+      dockerfile: Dockerfile.dev
+    tty: true
+    volumes:
+      - "./app:/app"
+      - "./data:/data"
+
+  app:
+    # docker compose run --rm app
+    image: ${REGISTRY}/cbz-maker:latest
+    volumes:
+      - "./data:/data"
+
+  unrar:
+    # docker compose run --rm unrar "filename.rar"
+    image: ${REGISTRY}/unrar
+    tty: true
+    volumes:
+      - "~/Downloads:/workspace"

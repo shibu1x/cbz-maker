@@ -1,0 +1,38 @@
+version: "3"
+
+dotenv: [".env"]
+
+tasks:
+  build:
+    cmds:
+      - task: arm
+      - docker buildx imagetools create -t ${REGISTRY}/${APP_NAME}:latest ${REGISTRY}/${APP_NAME}:arm
+      - docker pull ${REGISTRY}/${APP_NAME}:latest
+      - say -v Samantha "The Docker build is complete."
+
+  amd:
+    internal: true
+    silent: true
+    dir: app
+    cmds:
+      - |
+        docker buildx build \
+          --builder ${AMD64_BUILDER} \
+          --platform linux/amd64 \
+          --push \
+          -t ${REGISTRY}/${APP_NAME}:amd .
+
+  arm:
+    internal: true
+    silent: true
+    dir: app
+    cmds:
+      - |
+        docker buildx build \
+          --platform linux/arm64 \
+          --push \
+          -t ${REGISTRY}/${APP_NAME}:arm .
+
+  run:
+    cmds:
+      - docker compose run --rm app
