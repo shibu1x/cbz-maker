@@ -1,4 +1,4 @@
-# cbz_maker
+# cbz-maker
 
 Converts directories of JPG images into CBZ (Comic Book Archive) files.
 

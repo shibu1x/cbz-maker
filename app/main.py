@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import re
 import sys
 import shutil
 import subprocess
@@ -13,18 +14,24 @@ INPUT_DIR = '/data/input'
 OUTPUT_DIR = '/data/output'
 JPEG_QUALITY = 75
 
-IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.JPG', '.JPEG', '.png', '.PNG'}
+IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.JPG', '.JPEG', '.png', '.PNG', '.webp', '.WEBP'}
 PDF_EXTENSIONS = {'.pdf', '.PDF'}
 
 type Result = tuple[bool, str | None]
 
 
-def get_image_files(directory: Path) -> list[Path]:
-    return sorted(f for f in directory.rglob('*') if f.is_file() and f.suffix in IMAGE_EXTENSIONS)
+def natural_sort_key(path: Path) -> list[int | str]:
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r'(\d+)', str(path))]
 
 
-def get_pdf_files(directory: Path) -> list[Path]:
-    return sorted(f for f in directory.rglob('*') if f.is_file() and f.suffix in PDF_EXTENSIONS)
+def get_image_files(directory: Path, natural_sort: bool = False) -> list[Path]:
+    files = (f for f in directory.rglob('*') if f.is_file() and f.suffix in IMAGE_EXTENSIONS)
+    return sorted(files, key=natural_sort_key if natural_sort else None)
+
+
+def get_pdf_files(directory: Path, natural_sort: bool = False) -> list[Path]:
+    files = (f for f in directory.rglob('*') if f.is_file() and f.suffix in PDF_EXTENSIONS)
+    return sorted(files, key=natural_sort_key if natural_sort else None)
 
 
 def convert_pdf_to_images(pdf_path: Path, output_dir: Path) -> Result:
@@ -77,6 +84,15 @@ def split_landscape_image(
         return True, None
     except Exception as e:
         return False, f"Error splitting image: {e}"
+
+
+def convert_webp_to_jpg(image_path: Path, output_path: Path) -> Result:
+    try:
+        with Image.open(image_path) as img:
+            img.convert('RGB').save(output_path, 'JPEG', quality=JPEG_QUALITY)
+        return True, None
+    except Exception as e:
+        return False, f"Error converting webp to jpg: {e}"
 
 
 def is_valid_jpg_header(file_path: Path) -> Result:
@@ -150,6 +166,7 @@ def create_cbz(
     split_landscape: bool = False,
     crop_left: int = 0,
     crop_right: int = 0,
+    natural_sort: bool = False,
 ) -> Result:
     print(f"\nProcessing: {source_dir.name}")
     print("-" * 60)
@@ -157,8 +174,8 @@ def create_cbz(
     image_source_dir = source_dir
     pdf_conversion_dir: tempfile.TemporaryDirectory | None = None
 
-    pdf_files = get_pdf_files(source_dir)
-    if not get_image_files(source_dir) and len(pdf_files) == 1:
+    pdf_files = get_pdf_files(source_dir, natural_sort)
+    if not get_image_files(source_dir, natural_sort) and len(pdf_files) == 1:
         pdf_file = pdf_files[0]
         print(f"  Found single PDF file: {pdf_file.name}, converting to images...")
         pdf_conversion_dir = tempfile.TemporaryDirectory()
@@ -171,7 +188,7 @@ def create_cbz(
             return False, error
 
     try:
-        img_files = get_image_files(image_source_dir)
+        img_files = get_image_files(image_source_dir, natural_sort)
         if not img_files:
             print(f"  No image files found in {source_dir.name}")
             return False, "No image files found"
@@ -215,14 +232,24 @@ def _create_cbz_from_images(
                 output_idx += 2
 
             else:
-                suffix = '.jpg' if img_file.suffix.lower() == '.jpeg' else img_file.suffix.lower()
+                suffix = img_file.suffix.lower()
+                if suffix in ('.jpeg', '.webp'):
+                    suffix = '.jpg'
                 out_path = temp_path / f"{output_idx:03d}{suffix}"
-                try:
-                    shutil.copy2(img_file, out_path)
-                    print(f"    OK -> {out_path.name} (renamed)")
-                except Exception as e:
-                    print(f"    ERROR: Error copying file: {e}")
-                    return False, f"Error copying file: {e}"
+
+                if img_file.suffix.lower() == '.webp':
+                    success, error = convert_webp_to_jpg(img_file, out_path)
+                    if not success:
+                        print(f"    ERROR: {error}")
+                        return False, error
+                    print(f"    OK -> {out_path.name} (converted from webp)")
+                else:
+                    try:
+                        shutil.copy2(img_file, out_path)
+                        print(f"    OK -> {out_path.name} (renamed)")
+                    except Exception as e:
+                        print(f"    ERROR: Error copying file: {e}")
+                        return False, f"Error copying file: {e}"
                 output_idx += 1
 
         # Validate all processed images
@@ -285,6 +312,7 @@ def convert_directories_to_cbz(
     split_landscape: bool = False,
     crop_left: int = 0,
     crop_right: int = 0,
+    natural_sort: bool = False,
 ) -> tuple[int, int, int]:
     input_path = Path(INPUT_DIR)
     output_path = Path(OUTPUT_DIR)
@@ -315,7 +343,7 @@ def convert_directories_to_cbz(
             skipped_count += 1
             continue
 
-        success, error = create_cbz(subdir, cbz_path, split_landscape, crop_left, crop_right)
+        success, error = create_cbz(subdir, cbz_path, split_landscape, crop_left, crop_right, natural_sort)
         if success:
             success_count += 1
         else:
@@ -347,6 +375,8 @@ def main() -> None:
                         help='Split landscape images into two pages (default: False)')
     parser.add_argument('--crop-lr', type=int, default=0, metavar='PIXELS',
                         help='Crop PIXELS from both left and right sides before splitting (default: 0)')
+    parser.add_argument('--natural-sort', action='store_true', default=False,
+                        help='Sort files in natural order, e.g. "2" before "10" (default: False)')
 
     args = parser.parse_args()
     crop = args.crop_lr
@@ -356,9 +386,10 @@ def main() -> None:
     print(f"Split landscape images: {args.split_landscape}")
     if crop > 0:
         print(f"Crop left/right: {crop}px")
+    print(f"Natural sort: {args.natural_sort}")
     print("=" * 60)
 
-    _, _, failed = convert_directories_to_cbz(args.split_landscape, crop, crop)
+    _, _, failed = convert_directories_to_cbz(args.split_landscape, crop, crop, args.natural_sort)
     sys.exit(1 if failed > 0 else 0)
 
 
