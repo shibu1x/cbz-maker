@@ -77,6 +77,9 @@ def split_landscape_image(
                 img = img.crop((crop_left, 0, right_bound, height))
                 width = img.size[0]
 
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+
             mid = width // 2
             img.crop((mid, 0, width, height)).save(output_right, 'JPEG', quality=JPEG_QUALITY)
             img.crop((0, 0, mid, height)).save(output_left, 'JPEG', quality=JPEG_QUALITY)
